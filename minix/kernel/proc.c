@@ -322,10 +322,7 @@ not_runnable_pick_new:
 	if (proc_is_preempted(p)) {
 		p->p_rts_flags &= ~RTS_PREEMPTED;
 		if (proc_is_runnable(p)) {
-			if (p->p_cpu_time_left)
-				enqueue_head(p);
-			else
-				enqueue(p);
+			enqueue(p);
 		}
 	}
 
@@ -1604,12 +1601,12 @@ void enqueue(
  * This function can be used x-cpu as it always uses the queues of the cpu the
  * process is assigned to.
  */
-  int q = rp->p_priority;	 		/* scheduling queue to use */
+  int q = 0;	 		/* scheduling queue to use */
   struct proc **rdy_head, **rdy_tail;
   
   assert(proc_is_runnable(rp));
 
-  assert(q >= 0);
+  assert(q == 0);
 
   rdy_head = get_cpu_var(rp->p_cpu, run_q_head);
   rdy_tail = get_cpu_var(rp->p_cpu, run_q_tail);
@@ -1619,10 +1616,31 @@ void enqueue(
       rdy_head[q] = rdy_tail[q] = rp; 		/* create a new queue */
       rp->p_nextready = NULL;		/* mark new end */
   } 
-  else {					/* add to tail of queue */
-      rdy_tail[q]->p_nextready = rp;		/* chain tail of queue */	
-      rdy_tail[q] = rp;				/* set new queue tail */
-      rp->p_nextready = NULL;		/* mark new end */
+  else {					
+      struct proc *curr;
+	  struct proc *prev = NULL;
+
+	  curr = rdy_head[q];
+
+	  while (curr &&
+		curr->p_cpu_time_left <=
+		rp->p_cpu_time_left) {
+
+		prev = curr;
+		curr = curr->p_nextready;
+	}
+
+	  if (prev == NULL) {
+		rp->p_nextready = rdy_head[q];
+		rdy_head[q] = rp;
+	}
+	  else {
+		prev->p_nextready = rp;
+		rp->p_nextready = curr;
+	}
+
+	  if (curr == NULL)
+		rdy_tail[q] = rp;
   }
 
   if (cpuid == rp->p_cpu) {
@@ -1634,9 +1652,12 @@ void enqueue(
 	  struct proc * p;
 	  p = get_cpulocal_var(proc_ptr);
 	  assert(p);
-	  if((p->p_priority > rp->p_priority) &&
-			  (priv(p)->s_flags & PREEMPTIBLE))
-		  RTS_SET(p, RTS_PREEMPTED); /* calls dequeue() */
+	  if (p != rp &&
+		(priv(p)->s_flags & PREEMPTIBLE) &&
+		rp->p_cpu_time_left < p->p_cpu_time_left)
+	  {
+		RTS_SET(p, RTS_PREEMPTED);
+	  }
   }
 #ifdef CONFIG_SMP
   /*
@@ -1782,36 +1803,20 @@ void dequeue(struct proc *rp)
 /*===========================================================================*
  *				pick_proc				     * 
  *===========================================================================*/
-static struct proc * pick_proc(void)
+static struct proc *pick_proc(void)
 {
-/* Decide who to run now.  A new process is selected and returned.
- * When a billable process is selected, record it in 'bill_ptr', so that the 
- * clock task can tell who to bill for system time.
- *
- * This function always uses the run queues of the local cpu!
- */
-  register struct proc *rp;			/* process to run */
-  struct proc **rdy_head;
-  int q;				/* iterate over queues */
+    struct proc *rp;
 
-  /* Check each of the scheduling queues for ready processes. The number of
-   * queues is defined in proc.h, and priorities are set in the task table.
-   * If there are no processes ready to run, return NULL.
-   */
-  rdy_head = get_cpulocal_var(run_q_head);
-  for (q=0; q < NR_SCHED_QUEUES; q++) {	
-	if(!(rp = rdy_head[q])) {
-		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
-		continue;
-	}
-	assert(proc_is_runnable(rp));
-	if (priv(rp)->s_flags & BILLABLE)	 	
-		get_cpulocal_var(bill_ptr) = rp; /* bill for system time */
-	return rp;
-  }
-  return NULL;
+    rp = get_cpulocal_var(run_q_head)[0];
+
+    if (!rp)
+        return NULL;
+
+    if (priv(rp)->s_flags & BILLABLE)
+        get_cpulocal_var(bill_ptr) = rp;
+
+    return rp;
 }
-
 /*===========================================================================*
  *				endpoint_lookup				     *
  *===========================================================================*/
