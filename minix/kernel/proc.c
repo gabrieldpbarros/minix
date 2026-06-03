@@ -322,7 +322,7 @@ not_runnable_pick_new:
 	if (proc_is_preempted(p)) {
 		p->p_rts_flags &= ~RTS_PREEMPTED;
 		if (proc_is_runnable(p)) {
-			enqueue_head(p); //FCFS vai sempre pro fim da fila, mesmo quando a preempção ocorre.
+			enqueue_head(p); //FCFS vai sempre garantir que o processo em andamento termine antes do próximo.
 			/*
 			if (p->p_cpu_time_left)
 				enqueue_head(p);
