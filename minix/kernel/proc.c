@@ -322,7 +322,7 @@ not_runnable_pick_new:
 	if (proc_is_preempted(p)) {
 		p->p_rts_flags &= ~RTS_PREEMPTED;
 		if (proc_is_runnable(p)) {
-			enqueue(p); //FCFS vai sempre pro fim da fila, mesmo quando a preempção ocorre.
+			enqueue_head(p); //FCFS vai sempre pro fim da fila, mesmo quando a preempção ocorre.
 			/*
 			if (p->p_cpu_time_left)
 				enqueue_head(p);
@@ -1679,14 +1679,11 @@ void enqueue(
  * process on a run queue. We have to put this process back at the fron to be
  * fair
  */
-
- /*
- A função enqueue_head não é usada no escalonamento por FCFS, pois não é preemptivo.
  
 static void enqueue_head(struct proc *rp)
 {
   rp->p_priority = 0;
-  const int q = rp->p_priority;	 		/* scheduling queue to use 
+  const int q = rp->p_priority;	 		/* scheduling queue to use */
 
   struct proc **rdy_head, **rdy_tail;
 
@@ -1696,6 +1693,7 @@ static void enqueue_head(struct proc *rp)
   /*
    * the process was runnable without its quantum expired when dequeued. A
    * process with no time left should have been handled else and differently
+   */
   assert(rp->p_cpu_time_left);
 
   assert(q >= 0);
@@ -1704,20 +1702,20 @@ static void enqueue_head(struct proc *rp)
   rdy_head = get_cpu_var(rp->p_cpu, run_q_head);
   rdy_tail = get_cpu_var(rp->p_cpu, run_q_tail);
 
-  /* Now add the process to the queue. 
-  if (!rdy_head[q]) {		/* add to empty queue 
-	rdy_head[q] = rdy_tail[q] = rp; 	/* create a new queue 
-	rp->p_nextready = NULL;			/* mark new end 
-  } else {					/* add to head of queue 
-	rp->p_nextready = rdy_head[q];		/* chain head of queue 
-	rdy_head[q] = rp;			/* set new queue head 
+  /* Now add the process to the queue. */
+  if (!rdy_head[q]) {		/* add to empty queue */
+	rdy_head[q] = rdy_tail[q] = rp; 	/* create a new queue */
+	rp->p_nextready = NULL;			/* mark new end */
+  } else {					/* add to head of queue */
+	rp->p_nextready = rdy_head[q];		/* chain head of queue */
+	rdy_head[q] = rp;			/* set new queue head */
   }
 
-  /* Make note of when this process was added to queue 
+  /* Make note of when this process was added to queue */
   read_tsc_64(&(get_cpulocal_var(proc_ptr->p_accounting.enter_queue)));
 
 
-  /* Process accounting for scheduling 
+  /* Process accounting for scheduling */
   rp->p_accounting.dequeues--;
   rp->p_accounting.preempted++;
 
@@ -1725,7 +1723,6 @@ static void enqueue_head(struct proc *rp)
   assert(runqueues_ok_local());
 #endif
 }
-*/
 /*===========================================================================*
  *				dequeue					     * 
  *===========================================================================*/
