@@ -340,7 +340,7 @@ static void announce(void)
 #ifdef _VCS_REVISION
 	"(" _VCS_REVISION ")\n"
 #endif
-      "========================================\n"
+      "\n========================================\n"
       "| Minix 3.4.0rc6 - SO - UNIFESP 1s2026 |\n"
       "|    Projeto Pratico (I) - Equipe 5    |\n"
       "========================================\n",
