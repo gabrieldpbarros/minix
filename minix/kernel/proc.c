@@ -63,6 +63,37 @@ static void enqueue_head(struct proc *rp);
 /* all idles share the same idle_priv structure */
 static struct priv idle_priv;
 
+/* Vetor que guarda o total de tickets dos processos prontos em cada CPU a partir da fila 7*/
+unsigned int tickets_total[CONFIG_MAX_CPUS];
+
+/* Matriz que guarda o total de tickets dos processos prontos em cada fila da CPU */
+unsigned int tickets_na_fila[CONFIG_MAX_CPUS][NR_SCHED_QUEUES];
+
+/* semente de geração aleatória */
+unsigned int semente = SEMENTE;
+
+/* Função de Park_Miller para gerar números aleatórios */
+unsigned int park_miller_rand(unsigned int *seed) {
+    unsigned int q;
+    unsigned int r;
+    int hi;
+    int lo;
+    int teste;
+
+	q = 127773; // M / A
+    r = 2836;   // M % A
+    hi = *seed / q;
+    lo = *seed % q;
+    teste = 16807 * lo - r * hi;
+    
+    if (teste > 0) {
+        *seed = teste;
+    } else {
+        *seed = teste + 2147483647;
+    }
+    return *seed;
+}
+
 static void set_idle_name(char * name, int n)
 {
         int i, c;
@@ -127,6 +158,7 @@ void proc_init(void)
 	 * table with privilege structures for the system processes. 
 	 */
 	for (rp = BEG_PROC_ADDR, i = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++i) {
+		rp->num_tickets = 0; /* Inicializa slt com 0 tickets */
 		rp->p_rts_flags = RTS_SLOT_FREE;/* initialize free slot */
 		rp->p_magic = PMAGIC;
 		rp->p_nr = i;			/* proc number from ptr */
@@ -1611,6 +1643,18 @@ void enqueue(
 
   assert(q >= 0);
 
+  /* Verifica se o processo acabou de nascer e não possui tickets,
+  e caso não possua ele recebe a quantidade inicial padrão de tickets */
+  if(rp->num_tickets == 0) {
+	  rp->num_tickets = DEFAULT_TICKETS;
+  }
+
+  /* Atualiza os valores do vetor tickets_total da respectiva CPU do processo */
+  tickets_na_fila[rp->p_cpu][q] += rp->num_tickets;
+  if(q >= 7) {
+  	  tickets_total[rp->p_cpu] += rp->num_tickets;
+  }
+
   rdy_head = get_cpu_var(rp->p_cpu, run_q_head);
   rdy_tail = get_cpu_var(rp->p_cpu, run_q_tail);
 
@@ -1669,7 +1713,7 @@ void enqueue(
  */
 static void enqueue_head(struct proc *rp)
 {
-  const int q = rp->p_priority;	 		/* scheduling queue to use */
+  int q = rp->p_priority;	 		/* scheduling queue to use */
 
   struct proc **rdy_head, **rdy_tail;
 
@@ -1684,6 +1728,17 @@ static void enqueue_head(struct proc *rp)
 
   assert(q >= 0);
 
+  /* Verifica se o processo acabou de nascer e não possui tickets,
+  e caso não possua ele recebe a quantidade inicial padrão de tickets */
+  if(rp->num_tickets == 0) {
+	  rp->num_tickets = DEFAULT_TICKETS;
+  }
+
+  /* Atualiza os valores do vetor tickets_total da respectiva CPU do processo */
+  tickets_na_fila[rp->p_cpu][q] += rp->num_tickets;
+  if(q >= 7) {
+  	  tickets_total[rp->p_cpu] += rp->num_tickets;
+  }
 
   rdy_head = get_cpu_var(rp->p_cpu, run_q_head);
   rdy_tail = get_cpu_var(rp->p_cpu, run_q_tail);
@@ -1732,6 +1787,12 @@ void dequeue(struct proc *rp)
 
   assert(proc_ptr_ok(rp));
   assert(!proc_is_runnable(rp));
+
+  /* Atualiza o vetor de tickets totais por CPU */
+  tickets_na_fila[rp->p_cpu][q] -= rp->num_tickets;
+  if(q >= 7) {
+  	  tickets_total[rp->p_cpu] -= rp->num_tickets;
+  }
 
   /* Side-effect for kernel: check if the task's stack still is ok? */
   assert (!iskernelp(rp) || *priv(rp)->s_stack_guard == STACK_GUARD);
@@ -1793,15 +1854,24 @@ static struct proc * pick_proc(void)
   register struct proc *rp;			/* process to run */
   struct proc **rdy_head;
   int q;				/* iterate over queues */
+  unsigned int S; 		/* Contador */
+  unsigned int cpu_id;  /* ID da CPU */
+  unsigned int numero_aleatorio; /* vai guardar o número aleatório gerado */
+  unsigned int bilhete_premiado; /* será definitivamente o bilhete sorteado */
 
   /* Check each of the scheduling queues for ready processes. The number of
    * queues is defined in proc.h, and priorities are set in the task table.
    * If there are no processes ready to run, return NULL.
    */
+
+  /* Prioridade para processos nativos e mais importantes que os de usuários */
+  /* Varredura padrão Minix das Filas 0 até 6 */
+  S = 0;
+  cpu_id = cpuid; /* Pega o index da CPU atual*/
+	
   rdy_head = get_cpulocal_var(run_q_head);
-  for (q=0; q < NR_SCHED_QUEUES; q++) {	
+  for (q=0; q < 7; q++) {
 	if(!(rp = rdy_head[q])) {
-		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
 		continue;
 	}
 	assert(proc_is_runnable(rp));
@@ -1809,6 +1879,34 @@ static struct proc * pick_proc(void)
 		get_cpulocal_var(bill_ptr) = rp; /* bill for system time */
 	return rp;
   }
+
+  /* Verifica se existem processos de usuário */
+  if(tickets_total[cpu_id] == 0) return NULL;
+
+  /* Sorteio por meio da função de Park_Miller para gerar o bilhete aleatório */
+  numero_aleatorio = park_miller_rand(&semente);
+  bilhete_premiado = numero_aleatorio % tickets_total[cpu_id];
+
+  for(q = 7; q < NR_SCHED_QUEUES; q++) {
+	  if(!(rp = rdy_head[q])) {
+		continue;
+	  }
+	  if(S + tickets_na_fila[cpu_id][q] >= bilhete_premiado) {
+		   while (rp->p_nextready != NULL && S + rp->num_tickets <= bilhete_premiado) {
+				S += rp->num_tickets;
+				rp = rp->p_nextready;
+			}
+	
+		    assert(proc_is_runnable(rp));
+		    if (priv(rp)->s_flags & BILLABLE)	 	
+			    get_cpulocal_var(bill_ptr) = rp; /* bill for system time */
+		    return rp;
+	  }
+	  else {
+		  S += tickets_na_fila[cpu_id][q];
+	  }
+  }
+  
   return NULL;
 }
 
@@ -1977,4 +2075,14 @@ void ser_dump_proc(void)
                         continue;
                 print_proc_recursive(pp);
         }
+}
+
+void init_tickets(void) {
+	int cpu, q;
+	for(cpu = 0; cpu < CONFIG_MAX_CPUS; cpu++) {
+		tickets_total[cpu] = 0;
+		for(q = 0; q < NR_SCHED_QUEUES; q++) {
+			tickets_na_fila[cpu][q] = 0;
+		}
+	}
 }
