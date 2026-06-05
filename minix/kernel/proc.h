@@ -134,9 +134,17 @@ struct proc {
 #if DEBUG_TRACE
   int p_schedules;
 #endif
+
+  int num_tickets; /* Número de tickets de um processo */
 };
 
 #endif /* __ASSEMBLY__ */
+
+/* Número padrão de tickets para processos */
+#define DEFAULT_TICKETS 100
+
+/* Valor inicial na semente de geração aleatória */
+#define SEMENTE 12345
 
 /* Bits for the runtime flags. A process is runnable iff p_rts_flags == 0. */
 #define RTS_SLOT_FREE	0x01	/* process slot is free */
@@ -284,6 +292,9 @@ EXTERN struct proc proc[NR_TASKS + NR_PROCS];	/* process table */
 
 int mini_send(struct proc *caller_ptr, endpoint_t dst_e, message *m_ptr,
 	int flags);
+
+/* Função que inicializa o sistema de tickets da loteria */
+void init_tickets(void);
 
 #endif /* __ASSEMBLY__ */
 
