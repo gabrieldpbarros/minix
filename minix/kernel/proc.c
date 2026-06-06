@@ -322,10 +322,13 @@ not_runnable_pick_new:
 	if (proc_is_preempted(p)) {
 		p->p_rts_flags &= ~RTS_PREEMPTED;
 		if (proc_is_runnable(p)) {
+			enqueue_head(p); //FCFS vai sempre garantir que o processo em andamento termine antes do próximo.
+			/*
 			if (p->p_cpu_time_left)
 				enqueue_head(p);
 			else
 				enqueue(p);
+			*/
 		}
 	}
 
@@ -1604,7 +1607,8 @@ void enqueue(
  * This function can be used x-cpu as it always uses the queues of the cpu the
  * process is assigned to.
  */
-  int q = rp->p_priority;	 		/* scheduling queue to use */
+  rp->p_priority = 0;
+  int q = rp->p_priority;		/* scheduling queue to use */
   struct proc **rdy_head, **rdy_tail;
   
   assert(proc_is_runnable(rp));
@@ -1634,9 +1638,16 @@ void enqueue(
 	  struct proc * p;
 	  p = get_cpulocal_var(proc_ptr);
 	  assert(p);
+	  /*
+
+	  Escalonamento por FCFS não é preemptivo, 
+	  então não é necessário comparar prioridades.
+
 	  if((p->p_priority > rp->p_priority) &&
 			  (priv(p)->s_flags & PREEMPTIBLE))
-		  RTS_SET(p, RTS_PREEMPTED); /* calls dequeue() */
+		  RTS_SET(p, RTS_PREEMPTED); /* calls dequeue() 
+		  
+	  */
   }
 #ifdef CONFIG_SMP
   /*
@@ -1650,7 +1661,8 @@ void enqueue(
 #endif
 
   /* Make note of when this process was added to queue */
-  read_tsc_64(&(get_cpulocal_var(proc_ptr)->p_accounting.enter_queue));
+  //read_tsc_64(&(get_cpulocal_var(proc_ptr)->p_accounting.enter_queue));
+  read_tsc_64(&(rp->p_accounting.enter_queue));
 
 
 #if DEBUG_SANITYCHECKS
@@ -1667,8 +1679,10 @@ void enqueue(
  * process on a run queue. We have to put this process back at the fron to be
  * fair
  */
+ 
 static void enqueue_head(struct proc *rp)
 {
+  rp->p_priority = 0;
   const int q = rp->p_priority;	 		/* scheduling queue to use */
 
   struct proc **rdy_head, **rdy_tail;
@@ -1709,7 +1723,6 @@ static void enqueue_head(struct proc *rp)
   assert(runqueues_ok_local());
 #endif
 }
-
 /*===========================================================================*
  *				dequeue					     * 
  *===========================================================================*/
@@ -1723,7 +1736,7 @@ void dequeue(struct proc *rp)
  * This function can operate x-cpu as it always removes the process from the
  * queue of the cpu the process is currently assigned to.
  */
-  int q = rp->p_priority;		/* queue to use */
+  int q = 0; //rp->p_priority		/* queue to use */
   struct proc **xpp;			/* iterate over queue */
   struct proc *prev_xp;
   u64_t tsc, tsc_delta;
@@ -1792,13 +1805,22 @@ static struct proc * pick_proc(void)
  */
   register struct proc *rp;			/* process to run */
   struct proc **rdy_head;
-  int q;				/* iterate over queues */
+  //int q;				/* iterate over queues */
 
   /* Check each of the scheduling queues for ready processes. The number of
    * queues is defined in proc.h, and priorities are set in the task table.
    * If there are no processes ready to run, return NULL.
    */
   rdy_head = get_cpulocal_var(run_q_head);
+  rp = rdy_head[0]; //FCFS sempre utiliza a primeira fila (fila 0)
+  if (rp)
+  {
+	assert(proc_is_runnable(rp));
+	if (priv(rp)->s_flags & BILLABLE)
+		get_cpulocal_var(bill_ptr) = rp;
+	return rp;
+  }
+  /*
   for (q=0; q < NR_SCHED_QUEUES; q++) {	
 	if(!(rp = rdy_head[q])) {
 		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
@@ -1806,9 +1828,10 @@ static struct proc * pick_proc(void)
 	}
 	assert(proc_is_runnable(rp));
 	if (priv(rp)->s_flags & BILLABLE)	 	
-		get_cpulocal_var(bill_ptr) = rp; /* bill for system time */
+		get_cpulocal_var(bill_ptr) = rp; // bill for system time
 	return rp;
-  }
+  } 
+  */
   return NULL;
 }
 
@@ -1892,21 +1915,27 @@ static void notify_scheduler(struct proc *p)
 
 void proc_no_time(struct proc * p)
 {
+	/*
 	if (!proc_kernel_scheduler(p) && priv(p)->s_flags & PREEMPTIBLE) {
-		/* this dequeues the process */
+		/* this dequeues the process
 		notify_scheduler(p);
 	}
 	else {
 		/*
 		 * non-preemptible processes only need their quantum to
 		 * be renewed. In fact, they by pass scheduling
-		 */
 		p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
 #if DEBUG_RACE
 		RTS_SET(p, RTS_PREEMPTED);
 		RTS_UNSET(p, RTS_PREEMPTED);
 #endif
 	}
+	*/
+  p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
+  /* 
+  Não há preempção no escalonamento por FCFS mesmo quando o quantum é estourado.
+  Logo basta apenas renovar o tempo restante para que o processo continue em execução.
+  */
 }
 
 void reset_proc_accounting(struct proc *p)
