@@ -96,10 +96,8 @@ int do_noquantum(message *m_ptr)
 	}
 
 	rmp = &schedproc[proc_nr_n];
-	if (rmp->priority < MIN_USER_Q) {
-		rmp->priority += 1; /* lower priority */
-	}
-
+	// O processo não é rebaixado de prioridade nem reordenado quando o quantum esgota
+	// Basta reconfirmar o escalonamento sem alterar nada
 	if ((rv = schedule_process_local(rmp)) != OK) {
 		return rv;
 	}
@@ -345,11 +343,7 @@ void init_scheduling(void)
  *				balance_queues				     *
  *===========================================================================*/
 
-/* This function in called every N ticks to rebalance the queues. The current
- * scheduler bumps processes down one priority when ever they run out of
- * quantum. This function will find all proccesses that have been bumped down,
- * and pulls them back up. This default policy will soon be changed.
- */
+// Alarme renovado para o funcionamento normal do clock
 void balance_queues(void)
 {
 	int r;
