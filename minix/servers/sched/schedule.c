@@ -40,6 +40,28 @@ static int schedule_process(struct schedproc * rmp, unsigned flags);
 
 #define DEFAULT_USER_TIME_SLICE 200
 
+/* SRTN usando média móvel exponencial.
+ *
+ * O servidor SCHED não conhece exatamente o próximo burst de CPU
+ * de um processo. Por isso, estimamos o próximo burst com:
+ *
+ *   tau(n+1) = alpha * t(n) + (1 - alpha) * tau(n)
+ *
+ * Para evitar o uso de ponto flutuante no servidor do sistema,
+ * alpha é representado como SRTN_ALPHA_NUM / SRTN_ALPHA_DEN.
+ */
+#define SRTN_ALPHA_NUM		1
+#define SRTN_ALPHA_DEN		2
+#define SRTN_MIN_BURST		1
+#define SRTN_DEFAULT_BURST	DEFAULT_USER_TIME_SLICE
+
+static void srtn_init_proc(struct schedproc *rmp, struct schedproc *parent);
+static void srtn_charge_quantum(struct schedproc *rmp);
+static void srtn_recalculate_user_priorities(void);
+static int srtn_cmp_remaining(const struct schedproc *a,
+	const struct schedproc *b);
+
+
 /* processes created by RS are sysytem processes */
 #define is_system_proc(p)	((p)->parent == RS_PROC_NR)
 
@@ -80,6 +102,143 @@ static void pick_cpu(struct schedproc * proc)
 #endif
 }
 
+
+/*===========================================================================*
+ *				srtn_init_proc				     *
+ *===========================================================================*/
+static void srtn_init_proc(struct schedproc *rmp, struct schedproc *parent)
+{
+	if (parent != NULL && (parent->flags & IN_USE)) {
+		rmp->estimated_burst = parent->estimated_burst;
+		if (rmp->estimated_burst < SRTN_MIN_BURST)
+			rmp->estimated_burst = SRTN_DEFAULT_BURST;
+	} else {
+		rmp->estimated_burst = SRTN_DEFAULT_BURST;
+	}
+
+	rmp->remaining_time = rmp->estimated_burst;
+	rmp->current_burst = 0;
+}
+
+/*===========================================================================*
+ *				srtn_charge_quantum			     *
+ *===========================================================================*/
+static void srtn_charge_quantum(struct schedproc *rmp)
+{
+	unsigned used;
+
+	/* do_noquantum() é chamada apenas depois que o processo usa todo
+	 * o quantum que foi atribuído a ele. Portanto, a melhor informação
+	 * disponível aqui é o tamanho do quantum configurado.
+	 */
+	used = rmp->time_slice;
+	if (used < SRTN_MIN_BURST)
+		used = SRTN_MIN_BURST;
+
+	rmp->current_burst += used;
+
+	if (rmp->remaining_time > used) {
+		rmp->remaining_time -= used;
+		return;
+	}
+
+	/* O burst previsto terminou. Calcula a próxima estimativa usando EMA. */
+	rmp->estimated_burst =
+		((SRTN_ALPHA_NUM * rmp->current_burst) +
+		((SRTN_ALPHA_DEN - SRTN_ALPHA_NUM) * rmp->estimated_burst)) /
+		SRTN_ALPHA_DEN;
+
+	if (rmp->estimated_burst < SRTN_MIN_BURST)
+		rmp->estimated_burst = SRTN_MIN_BURST;
+
+	rmp->remaining_time = rmp->estimated_burst;
+	rmp->current_burst = 0;
+}
+
+/*===========================================================================*
+ *				srtn_cmp_remaining			     *
+ *===========================================================================*/
+static int srtn_cmp_remaining(const struct schedproc *a,
+	const struct schedproc *b)
+{
+	if (a->remaining_time < b->remaining_time)
+		return -1;
+	if (a->remaining_time > b->remaining_time)
+		return 1;
+
+	/* Critério de desempate: preserva, tanto quanto possível, o processo
+	 * que esperou ou iniciou primeiro usando a ordem dos endpoints.
+	 * Isso mantém o resultado estável.
+	 */
+	if (a->endpoint < b->endpoint)
+		return -1;
+	if (a->endpoint > b->endpoint)
+		return 1;
+
+	return 0;
+}
+
+/*===========================================================================*
+ *			srtn_recalculate_user_priorities		     *
+ *===========================================================================*/
+static void srtn_recalculate_user_priorities(void)
+{
+	struct schedproc *ordered[NR_PROCS];
+	struct schedproc *rmp;
+	int count, i, j, proc_nr;
+
+	count = 0;
+
+	/* Apenas processos de usuário são tratados por esta política SRTN.
+	 * Processos do sistema mantêm suas prioridades normais, o que é
+	 * mais seguro para o MINIX.
+	 */
+	for (proc_nr = 0, rmp = schedproc; proc_nr < NR_PROCS;
+	    proc_nr++, rmp++) {
+		if (!(rmp->flags & IN_USE))
+			continue;
+		if (is_system_proc(rmp))
+			continue;
+
+		ordered[count++] = rmp;
+	}
+
+	/* Ordenação por inserção simples: NR_PROCS é pequeno e esta função
+	 * roda apenas quando o SCHED é notificado, não a cada interrupção
+	 * do temporizador.
+	 */
+	for (i = 1; i < count; i++) {
+		struct schedproc *key = ordered[i];
+		j = i - 1;
+
+		while (j >= 0 && srtn_cmp_remaining(key, ordered[j]) < 0) {
+			ordered[j + 1] = ordered[j];
+			j--;
+		}
+		ordered[j + 1] = key;
+	}
+
+	for (i = 0; i < count; i++) {
+		unsigned new_q;
+
+		new_q = USER_Q + i;
+		if (new_q > MIN_USER_Q)
+			new_q = MIN_USER_Q;
+
+		/* Respeita nice/max_priority. No MINIX, um número menor de fila
+		 * significa maior prioridade de escalonamento.
+		 */
+		if (new_q < ordered[i]->max_priority)
+			new_q = ordered[i]->max_priority;
+
+		if (ordered[i]->priority != new_q) {
+			ordered[i]->priority = new_q;
+			schedule_process_local(ordered[i]);
+		}
+	}
+}
+
+
 /*===========================================================================*
  *				do_noquantum				     *
  *===========================================================================*/
@@ -96,9 +255,13 @@ int do_noquantum(message *m_ptr)
 	}
 
 	rmp = &schedproc[proc_nr_n];
-	if (rmp->priority < MIN_USER_Q) {
-		rmp->priority += 1; /* lower priority */
-	}
+
+	/* SRTN: em vez de diminuir a prioridade do processo como no
+	 * escalonador padrão, atualiza o tempo restante previsto e depois
+	 * reordena os processos de usuário pelo menor tempo restante.
+	 */
+	srtn_charge_quantum(rmp);
+	srtn_recalculate_user_priorities();
 
 	if ((rv = schedule_process_local(rmp)) != OK) {
 		return rv;
@@ -213,6 +376,11 @@ int do_start_scheduling(message *m_ptr)
 		assert(0);
 	}
 
+	if (m_ptr->m_type == SCHEDULING_INHERIT)
+		srtn_init_proc(rmp, &schedproc[parent_nr_n]);
+	else
+		srtn_init_proc(rmp, NULL);
+
 	/* Take over scheduling the process. The kernel reply message populates
 	 * the processes current priority and its time slice */
 	if ((rv = sys_schedctl(0, rmp->endpoint, 0, 0, 0)) != OK) {
@@ -235,6 +403,8 @@ int do_start_scheduling(message *m_ptr)
 			rv);
 		return rv;
 	}
+
+	srtn_recalculate_user_priorities();
 
 	/* Mark ourselves as the new scheduler.
 	 * By default, processes are scheduled by the parents scheduler. In case
@@ -352,17 +522,14 @@ void init_scheduling(void)
  */
 void balance_queues(void)
 {
-	struct schedproc *rmp;
-	int r, proc_nr;
+	int r;
 
-	for (proc_nr=0, rmp=schedproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
-		if (rmp->flags & IN_USE) {
-			if (rmp->priority > rmp->max_priority) {
-				rmp->priority -= 1; /* increase priority */
-				schedule_process_local(rmp);
-			}
-		}
-	}
+	/* O escalonador padrão aumenta periodicamente a prioridade dos
+	 * processos que foram rebaixados após usarem seu quantum. O SRTN
+	 * não usa essa política de envelhecimento; em vez disso, as
+	 * prioridades são derivadas de remaining_time.
+	 */
+	srtn_recalculate_user_priorities();
 
 	if ((r = sys_setalarm(balance_timeout, 0)) != OK)
 		panic("sys_setalarm failed: %d", r);
