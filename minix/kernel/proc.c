@@ -1633,11 +1633,6 @@ void enqueue(
 	   * enqueueing a process with a higher priority than the current one,
 	   * it gets preempted. The current process must be preemptible. Testing
 	   * the priority also makes sure that a process does not preempt itself
-	   */
-	  struct proc * p;
-	  p = get_cpulocal_var(proc_ptr);
-	  assert(p);
-	  /*
 
 	  Escalonamento por FCFS não é preemptivo, 
 	  então não é necessário comparar prioridades.
@@ -1810,16 +1805,7 @@ static struct proc * pick_proc(void)
    * If there are no processes ready to run, return NULL.
    */
   rdy_head = get_cpulocal_var(run_q_head);
-  /*
-  if (rp)
-  {
-	assert(proc_is_runnable(rp));
-	if (priv(rp)->s_flags & BILLABLE)
-		get_cpulocal_var(bill_ptr) = rp;
-	return rp;
-  }
-  */
-  
+
   for (q=0; q < NR_SCHED_QUEUES; q++) {	
 	if(!(rp = rdy_head[q])) {
 		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
@@ -1914,22 +1900,24 @@ static void notify_scheduler(struct proc *p)
 
 void proc_no_time(struct proc * p)
 {
-	/*
-	if (!proc_kernel_scheduler(p) && priv(p)->s_flags & PREEMPTIBLE) {
-		/* this dequeues the process
-		notify_scheduler(p);
-	}
-	else {
-		/*
-		 * non-preemptible processes only need their quantum to
-		 * be renewed. In fact, they by pass scheduling
-		p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
-#if DEBUG_RACE
-		RTS_SET(p, RTS_PREEMPTED);
-		RTS_UNSET(p, RTS_PREEMPTED);
-#endif
-	}
-	*/
+	// FCFS: bloco original comentado — no FCFS não há notificação ao sched
+    // quando o quantum esgota. O processo continua executando.
+    //
+    // if (!proc_kernel_scheduler(p) && priv(p)->s_flags & PREEMPTIBLE) {
+    //     // this dequeues the process
+    //     notify_scheduler(p);
+    // }
+    // else {
+    //     // non-preemptible processes only need their quantum renewed
+    //     p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
+    // #if DEBUG_RACE
+    //     RTS_SET(p, RTS_PREEMPTED);
+    //     RTS_UNSET(p, RTS_PREEMPTED);
+    // #endif
+    // }
+
+    /* FCFS: renova o quantum sem notificar o sched nem preemptar o processo.
+     * O processo em execução continua rodando até bloquear ou terminar. */
   p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
   /* 
   Não há preempção no escalonamento por FCFS mesmo quando o quantum é estourado.
