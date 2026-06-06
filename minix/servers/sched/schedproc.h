@@ -29,6 +29,16 @@ EXTERN struct schedproc {
 	unsigned max_priority;	/* this process' highest allowed priority */
 	unsigned priority;		/* the process' current priority */
 	unsigned time_slice;		/* this process's time slice */
+
+	/* SRTN/EMA
+	 * estimated_burst: próximo burst de CPU previsto, em ms.
+	 * remaining_time: tempo de CPU previsto ainda necessário para o burst atual.
+	 * current_burst: tempo de CPU já consumido no burst previsto atual.
+	 */
+	unsigned estimated_burst;
+	unsigned remaining_time;
+	unsigned current_burst;
+
 	unsigned cpu;		/* what CPU is the process running on */
 	bitchunk_t cpu_mask[BITMAP_CHUNKS(CONFIG_MAX_CPUS)]; /* what CPUs is the
 								process allowed
