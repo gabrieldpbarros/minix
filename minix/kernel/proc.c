@@ -322,7 +322,7 @@ not_runnable_pick_new:
 	if (proc_is_preempted(p)) {
 		p->p_rts_flags &= ~RTS_PREEMPTED;
 		if (proc_is_runnable(p)) {
-			enqueue_head(p); //FCFS vai sempre garantir que o processo em andamento termine antes do próximo.
+			enqueue_head(p); //FCFS reinsere processo preemptado no inicio da fila., preservando sua vez de execução.
 			/*
 			if (p->p_cpu_time_left)
 				enqueue_head(p);
@@ -1919,10 +1919,6 @@ void proc_no_time(struct proc * p)
     /* FCFS: renova o quantum sem notificar o sched nem preemptar o processo.
      * O processo em execução continua rodando até bloquear ou terminar. */
   p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
-  /* 
-  Não há preempção no escalonamento por FCFS mesmo quando o quantum é estourado.
-  Logo basta apenas renovar o tempo restante para que o processo continue em execução.
-  */
 }
 
 void reset_proc_accounting(struct proc *p)
