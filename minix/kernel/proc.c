@@ -1607,7 +1607,6 @@ void enqueue(
  * This function can be used x-cpu as it always uses the queues of the cpu the
  * process is assigned to.
  */
-  rp->p_priority = 0;
   int q = rp->p_priority;		/* scheduling queue to use */
   struct proc **rdy_head, **rdy_tail;
   
@@ -1645,7 +1644,7 @@ void enqueue(
 
 	  if((p->p_priority > rp->p_priority) &&
 			  (priv(p)->s_flags & PREEMPTIBLE))
-		  RTS_SET(p, RTS_PREEMPTED); /* calls dequeue() 
+		  RTS_SET(p, RTS_PREEMPTED);
 		  
 	  */
   }
@@ -1682,7 +1681,6 @@ void enqueue(
  
 static void enqueue_head(struct proc *rp)
 {
-  rp->p_priority = 0;
   const int q = rp->p_priority;	 		/* scheduling queue to use */
 
   struct proc **rdy_head, **rdy_tail;
@@ -1736,7 +1734,7 @@ void dequeue(struct proc *rp)
  * This function can operate x-cpu as it always removes the process from the
  * queue of the cpu the process is currently assigned to.
  */
-  int q = 0; //rp->p_priority		/* queue to use */
+  int q = rp->p_priority;		/* queue to use */
   struct proc **xpp;			/* iterate over queue */
   struct proc *prev_xp;
   u64_t tsc, tsc_delta;
@@ -1805,14 +1803,14 @@ static struct proc * pick_proc(void)
  */
   register struct proc *rp;			/* process to run */
   struct proc **rdy_head;
-  //int q;				/* iterate over queues */
+  int q;				/* iterate over queues */
 
   /* Check each of the scheduling queues for ready processes. The number of
    * queues is defined in proc.h, and priorities are set in the task table.
    * If there are no processes ready to run, return NULL.
    */
   rdy_head = get_cpulocal_var(run_q_head);
-  rp = rdy_head[0]; //FCFS sempre utiliza a primeira fila (fila 0)
+  /*
   if (rp)
   {
 	assert(proc_is_runnable(rp));
@@ -1820,7 +1818,8 @@ static struct proc * pick_proc(void)
 		get_cpulocal_var(bill_ptr) = rp;
 	return rp;
   }
-  /*
+  */
+  
   for (q=0; q < NR_SCHED_QUEUES; q++) {	
 	if(!(rp = rdy_head[q])) {
 		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
@@ -1831,7 +1830,7 @@ static struct proc * pick_proc(void)
 		get_cpulocal_var(bill_ptr) = rp; // bill for system time
 	return rp;
   } 
-  */
+  
   return NULL;
 }
 
