@@ -1,4 +1,5 @@
-/* This file contains essentially all of the process and message handling.
+ 	/* This file contains essentially all of the process and message 
+handling.
  * Together with "mpx.s" it forms the lowest layer of the MINIX kernel.
  * There is one entry point from the outside:
  *
@@ -17,12 +18,12 @@
  * pointer pointers are used throughout the code. Pointer pointers prevent
  * exceptions for the head or tail of a linked list. 
  *
- *  node_t *queue, *new_node;	// assume these as global variables
- *  node_t **xpp = &queue; 	// get pointer pointer to head of queue 
- *  while (*xpp != NULL) 	// find last pointer of the linked list
- *      xpp = &(*xpp)->next;	// get pointer to next pointer 
- *  *xpp = new_node;		// now replace the end (the NULL pointer) 
- *  new_node->next = NULL;	// and mark the new end of the list
+ *  node_t *queue, *new_node;	 assume these as global variables
+ *  node_t **xpp = &queue; 	 get pointer pointer to head of queue 
+ *  while (*xpp != NULL) 	 find last pointer of the linked list
+ *      xpp = &(*xpp)->next;	 get pointer to next pointer 
+ *  *xpp = new_node;		 now replace the end (the NULL pointer) 
+ *  new_node->next = NULL;	 and mark the new end of the list
  * 
  * For example, when adding a new node to the end of the list, one normally 
  * makes an exception for an empty list and looks up the end of the list for 
@@ -132,7 +133,7 @@ void proc_init(void)
 		rp->p_nr = i;			/* proc number from ptr */
 		rp->p_endpoint = _ENDPOINT(0, rp->p_nr); /* generation no. 0 */
 		rp->p_scheduler = NULL;		/* no user space scheduler */
-		rp->p_priority = 0;		/* no priority */
+		rp->p_priority = 0;		/* no priority/
 		rp->p_quantum_size_ms = 0;	/* no quantum size */
 
 		/* arch-specific initialization */
@@ -322,8 +323,8 @@ not_runnable_pick_new:
 	if (proc_is_preempted(p)) {
 		p->p_rts_flags &= ~RTS_PREEMPTED;
 		if (proc_is_runnable(p)) {
-			enqueue_head(p); //FCFS vai sempre garantir que o processo em andamento termine antes do próximo.
-			/*
+			enqueue_head(p); /*FCFS vai sempre garantir que 
+o processo em andamento termine antes do próximo. */
 			if (p->p_cpu_time_left)
 				enqueue_head(p);
 			else
@@ -1607,7 +1608,7 @@ void enqueue(
  * This function can be used x-cpu as it always uses the queues of the cpu the
  * process is assigned to.
  */
-  rp->p_priority = 0;
+  
   int q = rp->p_priority;		/* scheduling queue to use */
   struct proc **rdy_head, **rdy_tail;
   
@@ -1638,16 +1639,14 @@ void enqueue(
 	  struct proc * p;
 	  p = get_cpulocal_var(proc_ptr);
 	  assert(p);
-	  /*
 
-	  Escalonamento por FCFS não é preemptivo, 
-	  então não é necessário comparar prioridades.
-
-	  if((p->p_priority > rp->p_priority) &&
-			  (priv(p)->s_flags & PREEMPTIBLE))
-		  RTS_SET(p, RTS_PREEMPTED); /* calls dequeue() 
-		  
-	  */
+	/*
+         * Escalonamento por FCFS nao e preemptivo, 
+	 * entao nao e necessario comparar prioridades.
+	 * if((p->p_priority > rp->p_priority) &&
+         *		  (priv(p)->s_flags & PREEMPTIBLE))
+	 *	  RTS_SET(p, RTS_PREEMPTED);  calls dequeue()
+	 */
   }
 #ifdef CONFIG_SMP
   /*
@@ -1661,8 +1660,7 @@ void enqueue(
 #endif
 
   /* Make note of when this process was added to queue */
-  //read_tsc_64(&(get_cpulocal_var(proc_ptr)->p_accounting.enter_queue));
-  read_tsc_64(&(rp->p_accounting.enter_queue));
+   read_tsc_64(&(rp->p_accounting.enter_queue));
 
 
 #if DEBUG_SANITYCHECKS
@@ -1682,7 +1680,6 @@ void enqueue(
  
 static void enqueue_head(struct proc *rp)
 {
-  rp->p_priority = 0;
   const int q = rp->p_priority;	 		/* scheduling queue to use */
 
   struct proc **rdy_head, **rdy_tail;
@@ -1712,7 +1709,7 @@ static void enqueue_head(struct proc *rp)
   }
 
   /* Make note of when this process was added to queue */
-  read_tsc_64(&(get_cpulocal_var(proc_ptr->p_accounting.enter_queue)));
+  read_tsc_64(&(rp->p_accounting.enter_queue));
 
 
   /* Process accounting for scheduling */
@@ -1736,7 +1733,7 @@ void dequeue(struct proc *rp)
  * This function can operate x-cpu as it always removes the process from the
  * queue of the cpu the process is currently assigned to.
  */
-  int q = 0; //rp->p_priority		/* queue to use */
+  int q = rp->priority; 		/* queue to use */
   struct proc **xpp;			/* iterate over queue */
   struct proc *prev_xp;
   u64_t tsc, tsc_delta;
@@ -1805,33 +1802,24 @@ static struct proc * pick_proc(void)
  */
   register struct proc *rp;			/* process to run */
   struct proc **rdy_head;
-  //int q;				/* iterate over queues */
+  int q;				/* iterate over queues */
 
   /* Check each of the scheduling queues for ready processes. The number of
    * queues is defined in proc.h, and priorities are set in the task table.
    * If there are no processes ready to run, return NULL.
    */
   rdy_head = get_cpulocal_var(run_q_head);
-  rp = rdy_head[0]; //FCFS sempre utiliza a primeira fila (fila 0)
-  if (rp)
-  {
-	assert(proc_is_runnable(rp));
-	if (priv(rp)->s_flags & BILLABLE)
-		get_cpulocal_var(bill_ptr) = rp;
-	return rp;
-  }
-  /*
   for (q=0; q < NR_SCHED_QUEUES; q++) {	
 	if(!(rp = rdy_head[q])) {
-		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
+		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", 
+cpuid, q););
 		continue;
 	}
 	assert(proc_is_runnable(rp));
 	if (priv(rp)->s_flags & BILLABLE)	 	
-		get_cpulocal_var(bill_ptr) = rp; // bill for system time
+		get_cpulocal_var(bill_ptr) = rp; /* bill for system time */
 	return rp;
-  } 
-  */
+  }
   return NULL;
 }
 
@@ -1915,22 +1903,6 @@ static void notify_scheduler(struct proc *p)
 
 void proc_no_time(struct proc * p)
 {
-	/*
-	if (!proc_kernel_scheduler(p) && priv(p)->s_flags & PREEMPTIBLE) {
-		/* this dequeues the process
-		notify_scheduler(p);
-	}
-	else {
-		/*
-		 * non-preemptible processes only need their quantum to
-		 * be renewed. In fact, they by pass scheduling
-		p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
-#if DEBUG_RACE
-		RTS_SET(p, RTS_PREEMPTED);
-		RTS_UNSET(p, RTS_PREEMPTED);
-#endif
-	}
-	*/
   p->p_cpu_time_left = ms_2_cpu_time(p->p_quantum_size_ms);
   /* 
   Não há preempção no escalonamento por FCFS mesmo quando o quantum é estourado.
